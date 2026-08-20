@@ -19,7 +19,7 @@ jobs:
     # secrets.* cannot be read from a step-level `if`, so the presence check
     # below goes through the job environment instead.
     env:
-      HAS_HUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD != '' }}
+      HAS_HUB_CREDENTIAL: ${{ secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,16 +58,22 @@ jobs:
       # overview then documents. A pre-release must not move it, same as
       # :latest.
       #
-      # This needs DOCKERHUB_PASSWORD rather than DOCKERHUB_TOKEN: Docker Hub
-      # rejects full_description updates made with a personal access token
-      # ("access to the resource is forbidden with personal access token").
-      # A dedicated machine account without 2FA keeps that blast radius small.
+      # Docker Hub rejects full_description updates authenticated with a
+      # personal access token ("access to the resource is forbidden with
+      # personal access token"); the account password is accepted. This reuses
+      # DOCKERHUB_TOKEN because that is the credential already proven to work
+      # against Hub here -- if it holds a password the overview updates, and if
+      # it holds a PAT the step logs a 403.
+      #
+      # continue-on-error because the overview is cosmetic: a plugin that built
+      # and pushed correctly must not be marked a failed release over it.
       - name: update the Docker Hub overview
-        if: ${{ !contains(steps.tag.outputs.value, '-') && env.HAS_HUB_PASSWORD == 'true' }}
+        if: ${{ !contains(steps.tag.outputs.value, '-') && env.HAS_HUB_CREDENTIAL == 'true' }}
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: glabservices/gcloud-secret
           short-description: Google Cloud Secret Manager secret provider for Docker Swarm
           readme-filepath: ./README.md
