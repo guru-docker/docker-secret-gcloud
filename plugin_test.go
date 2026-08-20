@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +33,11 @@ type fakeAccessor struct {
 	crc       *int64
 	noPayload bool
 	err       error
+
+	created   []*secretmanagerpb.CreateSecretRequest
+	added     []*secretmanagerpb.AddSecretVersionRequest
+	createErr error
+	addErr    error
 }
 
 func (f *fakeAccessor) AccessSecretVersion(_ context.Context, req *secretmanagerpb.AccessSecretVersionRequest, _ ...gax.CallOption) (*secretmanagerpb.AccessSecretVersionResponse, error) {
@@ -52,6 +56,28 @@ func (f *fakeAccessor) AccessSecretVersion(_ context.Context, req *secretmanager
 		Name:    req.GetName(),
 		Payload: &secretmanagerpb.SecretPayload{Data: f.payload, DataCrc32C: f.crc},
 	}, nil
+}
+
+func (f *fakeAccessor) CreateSecret(_ context.Context, req *secretmanagerpb.CreateSecretRequest, _ ...gax.CallOption) (*secretmanagerpb.Secret, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.created = append(f.created, req)
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
+	return &secretmanagerpb.Secret{Name: req.GetParent() + "/secrets/" + req.GetSecretId()}, nil
+}
+
+func (f *fakeAccessor) AddSecretVersion(_ context.Context, req *secretmanagerpb.AddSecretVersionRequest, _ ...gax.CallOption) (*secretmanagerpb.SecretVersion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.added = append(f.added, req)
+	if f.addErr != nil {
+		return nil, f.addErr
+	}
+	return &secretmanagerpb.SecretVersion{Name: req.GetParent() + "/versions/1"}, nil
 }
 
 func (f *fakeAccessor) Close() error {
@@ -78,11 +104,6 @@ func newTestDriver(t *testing.T, fake *fakeAccessor, project string) *DockerDriv
 	d.newClient = func(context.Context) (versionAccessor, error) { return fake, nil }
 
 	return d
-}
-
-func crc32cOf(data []byte) *int64 {
-	sum := int64(crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)))
-	return &sum
 }
 
 // --- request resolution ----------------------------------------------------

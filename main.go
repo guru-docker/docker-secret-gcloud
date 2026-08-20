@@ -32,6 +32,9 @@ func main() {
 	defer d.Close()
 
 	h := secrets.NewHandler(d)
+	// The secrets helper embeds sdk.Handler, whose mux is shared, so this puts
+	// the create route on the same socket as GetSecret. Docker never calls it.
+	registerCreate(h, d)
 
 	log.Info().Any("method", "main").Msgf("listening on %s", socketAddress)
 	log.Error().Msgf("%v", h.ServeUnix(socketAddress, 0))

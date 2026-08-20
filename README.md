@@ -71,6 +71,49 @@ $ docker service create --name app --secret api-key myimage
 The value lands at `/run/secrets/api-key` in the task, exactly as a normal
 swarm secret does.
 
+## Creating secrets through the plugin
+
+`docker secret create` cannot provision anything in Secret Manager. Docker writes
+the name and labels into the swarm's raft store and never consults the driver, so
+a swarm secret naming a secret that does not exist succeeds, and only fails later
+when a task tries to mount it.
+
+The plugin therefore exposes a route of its own, `/SecretProvider.CreateSecret`,
+on the same socket. Docker never calls it; `scripts/gcloud-secret-ctl` does:
+
+```
+# a value nobody needs to choose -- a password, a token, a signing key
+$ gcloud-secret-ctl create api-key --generate 32
+
+# a value issued elsewhere
+$ gcloud-secret-ctl create stripe-key --value-file ./stripe.txt
+$ printf '%s' "$KEY" | gcloud-secret-ctl create stripe-key --value-file -
+
+# add a version to a secret that already exists, i.e. rotate it
+$ gcloud-secret-ctl create api-key --generate 32 --if-missing
+
+# read a value back
+$ gcloud-secret-ctl get api-key
+```
+
+The point is where the credentials live. The write happens inside the plugin,
+using the service account it already holds, so provisioning needs no GCP
+credentials on your workstation -- only root on a node where the plugin runs,
+since the plugin socket is `root`-owned.
+
+Two consequences worth understanding before enabling this:
+
+- The service account needs `secretmanager.secrets.create` and
+  `secretmanager.versions.add` in addition to `secretAccessor`. That is a wider
+  grant on every manager. If provisioning is rare, doing it with `gcloud` under
+  your own credentials keeps the managers read-only, which is the safer default.
+- Creating an existing secret is an error unless `--if-missing` is given, so a
+  typo cannot quietly add a version to the wrong secret.
+
+The value never enters the swarm's raft store: it travels over the plugin socket
+straight to Secret Manager. A generated value is not echoed back either -- read
+it with `gcloud-secret-ctl get` if something needs it.
+
 ## Config files
 
 A Secret Manager payload is bytes, up to 64KiB, so a whole config file goes in

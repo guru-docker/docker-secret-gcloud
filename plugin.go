@@ -33,10 +33,22 @@ var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // that "projects/p/secrets/s" can be completed to the latest version.
 var resourcePattern = regexp.MustCompile(`^projects/[^/]+(?:/locations/[^/]+)?/secrets/[^/]+(/versions/[^/]+)?$`)
 
+// The same shape, split into the parent and secret id CreateSecret wants.
+var createParentPattern = regexp.MustCompile(`^(projects/[^/]+(?:/locations/[^/]+)?)/secrets/([^/]+)/versions/[^/]+$`)
+
+// A regional parent. Regional secrets take no replication policy.
+var regionalParentPattern = regexp.MustCompile(`^projects/[^/]+/locations/[^/]+$`)
+
 // versionAccessor is the part of *secretmanager.Client the driver uses; tests
 // substitute a fake so no call reaches Google.
+//
+// Get needs only AccessSecretVersion. The other two serve the CreateSecret
+// route, which is this plugin's own API rather than part of the
+// docker.secretprovider protocol -- see create.go.
 type versionAccessor interface {
 	AccessSecretVersion(context.Context, *secretmanagerpb.AccessSecretVersionRequest, ...gax.CallOption) (*secretmanagerpb.AccessSecretVersionResponse, error)
+	CreateSecret(context.Context, *secretmanagerpb.CreateSecretRequest, ...gax.CallOption) (*secretmanagerpb.Secret, error)
+	AddSecretVersion(context.Context, *secretmanagerpb.AddSecretVersionRequest, ...gax.CallOption) (*secretmanagerpb.SecretVersion, error)
 	Close() error
 }
 
@@ -212,6 +224,17 @@ func normalizeResource(resource string) (string, error) {
 	return resource, nil
 }
 
+// splitResource turns a canonical version resource into the parent and secret id
+// that CreateSecret takes. Regional secrets keep their location in the parent,
+// where the API expects it.
+func splitResource(resource string) (parent, secretID string, err error) {
+	m := createParentPattern.FindStringSubmatch(resource)
+	if m == nil {
+		return "", "", logError("%q cannot be split into a create parent", resource)
+	}
+	return m[1], m[2], nil
+}
+
 // verifyCRC32C checks the payload against the checksum Secret Manager stores
 // with it. The checksum is optional in the response; absent means "not stored".
 func verifyCRC32C(data []byte, want *int64) error {
@@ -225,6 +248,13 @@ func verifyCRC32C(data []byte, want *int64) error {
 	}
 
 	return nil
+}
+
+// crc32cOf renders the checksum Secret Manager stores alongside a payload, so a
+// value damaged on the way in is rejected at write time rather than read time.
+func crc32cOf(data []byte) *int64 {
+	sum := int64(crc32.Checksum(data, crc32.MakeTable(crc32.Castagnoli)))
+	return &sum
 }
 
 func boolLabel(labels map[string]string, key string) (bool, error) {
