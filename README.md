@@ -20,6 +20,20 @@ key instead of reading a hosted store, use
 
 ## Usage
 
+0 - Create the secret in Secret Manager, once
+
+```
+$ printf 'the-value' | gcloud secrets create api-key \
+    --replication-policy=automatic --data-file=- --project=<project>
+```
+
+> This plugin never creates anything. It calls one API, `AccessSecretVersion`,
+> so its service account needs only `roles/secretmanager.secretAccessor` on the
+> secret -- not `secrets.create`. A `docker secret create` naming a secret that
+> does not exist here succeeds, because Docker does not consult the driver at
+> that point; the failure surfaces later, when the first task that mounts it is
+> scheduled and the driver answers `NotFound`.
+
 1 - Install the plugin on each swarm manager
 
 ```
@@ -34,11 +48,7 @@ $ docker plugin install glabservices/gcloud-secret \
     gcloud.source=<any_folder>
 ```
 
-2 - Create a secret
-
-> The secret must already exist in Secret Manager, and the plugin's service
-> account needs `roles/secretmanager.secretAccessor` on it. Nothing is written
-> back: the plugin only reads.
+2 - Create the swarm secret that points at it
 
 ```
 $ docker secret create \
