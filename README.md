@@ -61,6 +61,37 @@ $ docker service create --name app --secret api-key myimage
 The value lands at `/run/secrets/api-key` in the task, exactly as a normal
 swarm secret does.
 
+## Config files
+
+A Secret Manager payload is bytes, up to 64KiB, so a whole config file goes in
+exactly as an API key does. Paired with an absolute `target`, this plugin puts
+it wherever the service expects to find it:
+
+```
+$ gcloud secrets create app-config --replication-policy=automatic \
+    --data-file=./app.yaml
+
+$ docker secret create -d glabservices/gcloud-secret \
+    -l gcloud.secret=app-config \
+    app-config
+
+$ docker service create --name app \
+    --secret source=app-config,target=/etc/app/config.yaml,mode=0444 \
+    myimage
+```
+
+The file lands at `/etc/app/config.yaml` with the mode you asked for, and
+`/run/secrets` is not involved. Nothing about the value being configuration
+rather than a credential changes how it is fetched, so rotation works the same
+way: add a version in Secret Manager and the next task to start picks it up.
+
+Use a plain `docker config` when the contents are not sensitive. It costs no API
+call when a task starts, does not depend on Secret Manager being reachable, and
+`docker config inspect` shows you the value while you are debugging. Reach for
+this plugin when that last property is the problem -- a driver-backed secret
+keeps nothing in the swarm's raft log but the name and labels, and the value
+cannot be read back at all.
+
 ## Options
 
 The swarm secret carries labels that tell the plugin which version to read.
